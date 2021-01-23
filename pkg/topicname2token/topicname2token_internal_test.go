@@ -1,4 +1,4 @@
-package main
+package topicname2token
 
 import (
 	"fmt"
