@@ -10,20 +10,19 @@ import (
 	"syscall"
 	"tool/pkg/topicname2token"
 
+	"github.com/golang/geo/s2"
 	"golang.org/x/crypto/ssh/terminal"
 )
 
 func main() {
 	fName := flag.String("f", "", "File name")
 	isHtml := flag.Bool("html", false, "Output by html format")
+	level := flag.Int("l", -1, "Zoom level (0-30)")
+	isCenterHold := flag.Bool("h", false, "Hold center position")
 	flag.Parse()
 
 	var filePointer *os.File = nil
 
-	isAdded := false
-	subscribingTokens := []string{}
-	counter := 1
-	step := 1
 	if *fName != "" {
 		var err error
 		filePointer, err = os.Open(*fName)
@@ -45,6 +44,13 @@ func main() {
 		defer filePointer.Close()
 	}
 
+	isAdded := false
+	subscribingTokens := []string{}
+	counter := 1
+	step := 1
+	minLevel := 30
+	centerLat, centerLng := 0., 0.
+	isUpdatedCenter := false
 	htmlString := `<!DOCTYPE html>
 	<html lang="en">
 	<head>
@@ -53,7 +59,7 @@ func main() {
 		<title>Document</title>
 	</head>
 	<body>`
-	htmlLinkFormat := "<p><a href=\"https://s2.sidewalklabs.com/regioncoverer/?cells=%v\" target=\"_blank\" rel=\"noopener noreferrer\">%v</a></p>\n"
+	htmlLinkFormat := "<p><a href=\"https://s2.sidewalklabs.com/regioncoverer/?center=%f%%2C%f&zoom=%d&cells=%s\" target=\"_blank\" rel=\"noopener noreferrer\">%d</a></p>\n"
 	if filePointer != nil {
 		scanner := bufio.NewScanner(filePointer)
 		for scanner.Scan() {
@@ -71,6 +77,14 @@ func main() {
 			if cmd == "a" || cmd == "add" {
 				subscribingTokens = append(subscribingTokens, token)
 				isAdded = true
+				id := s2.CellIDFromToken(token)
+				if minLevel > id.Level() {
+					minLevel = id.Level()
+					if !*isCenterHold || !isUpdatedCenter {
+						centerLat, centerLng = id.LatLng().Lat.Degrees(), id.LatLng().Lng.Degrees()
+						isUpdatedCenter = true
+					}
+				}
 			} else if cmd == "r" || cmd == "remove" {
 				if isAdded {
 					out := ""
@@ -81,8 +95,13 @@ func main() {
 						if !*isHtml {
 							fmt.Println(out)
 						}
-						htmlString += fmt.Sprintf(htmlLinkFormat, strings.Replace(out[:len(out)-2], ",", "%2C", -1), step)
+						tmpLevel := minLevel
+						if *level > -1 {
+							tmpLevel = *level
+						}
+						htmlString += fmt.Sprintf(htmlLinkFormat, centerLat, centerLng, tmpLevel, strings.Replace(out[:len(out)-2], ",", "%2C", -1), step)
 						step++
+						minLevel = 30
 					}
 				}
 				l := len(subscribingTokens)
@@ -99,13 +118,22 @@ func main() {
 		}
 		out := ""
 		for _, v := range subscribingTokens {
+			id := s2.CellIDFromToken(v)
+			if minLevel > id.Level() {
+				minLevel = id.Level()
+				centerLat, centerLng = id.LatLng().Lat.Degrees(), id.LatLng().Lng.Degrees()
+			}
 			out += v + ","
 		}
 		if len(out) > 0 {
 			if !*isHtml {
 				fmt.Println(out)
 			}
-			htmlString += fmt.Sprintf(htmlLinkFormat, strings.Replace(out[:len(out)-2], ",", "%2C", -1))
+			tmpLevel := minLevel
+			if *level > -1 {
+				tmpLevel = *level
+			}
+			htmlString += fmt.Sprintf(htmlLinkFormat, centerLat, centerLng, tmpLevel, strings.Replace(out[:len(out)-2], ",", "%2C", -1), step)
 		}
 		htmlString += `</body>
 		</html>`
